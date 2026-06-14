@@ -1,0 +1,41 @@
+El archivo describe un test técnico de Machine Learning para la empresa MercadoLibre (ML), que opera en múltiples países de Latinoamérica procesando más de 50 órdenes por segundo.
+
+La tarea en detalle
+Contexto
+MercadoLibre necesita pronosticar la demanda de productos con la mayor precisión posible para tener el stock correcto en cada ciudad y entregar a tiempo a sus compradores.
+
+Datos disponibles
+Se entregan dos archivos:
+
+product_sales.csv — Ventas históricas de productos:
+
+product_id: ID del producto
+country: País de la venta
+date: Fecha de la venta
+zipcode: Código postal desde donde se sirve el producto
+sales: Número de ventas en esa fecha y país
+geo.csv — Información geográfica:
+
+country: País
+s_zipcode / e_zipcode: Rango de códigos postales
+city: Ciudad que sirve ese rango
+Lógica de asignación ciudad-producto
+Cada producto tiene un zipcode. Ese zipcode cae dentro de un rango definido en geo.csv, lo que determina desde qué ciudad se sirve ese producto.
+
+Objetivo principal
+Generar un forecast de demanda semanal con estas características:
+
+Granularidad: por product_id + city
+Horizonte: los próximos 3 días desde la última fecha de venta en el dataset
+Semántica de la predicción: el forecast para el día N es la suma proyectada de ventas de los 7 días siguientes (semana completa)
+Ej: forecast del 9 de agosto = ventas proyectadas del 9 al 15 de agosto
+Entregable
+Un archivo submission.csv con el formato definido
+El código completo usado para generar el forecast
+Análisis exploratorio y justificación de decisiones
+Código documentado y resultados replicables
+Criterios de evaluación
+Correctitud del análisis y procesamiento de datos
+Modelos usados y sus supuestos
+Claridad del código
+Calidad de las predicciones

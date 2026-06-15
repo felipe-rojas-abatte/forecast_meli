@@ -287,9 +287,9 @@ def feature_engineering(df: pd.DataFrame) -> tuple:
     # ── Features de alto impacto para series cortas ───────────────────────────
     # Tendencia: ¿el combo está creciendo o cayendo?
     weekly["trend_4w"] = (weekly["lag_1w"] - weekly["lag_4w"]) / 3
-    # Variabilidad de la demanda (coeficiente de variación)
+    # Variabilidad de la demanda (coeficiente de variación sobre 4 semanas)
     weekly["cv_4w"] = (
-        weekly[["lag_1w", "lag_2w", "lag_4w"]].std(axis=1)
+        weekly[["lag_1w", "lag_2w", "lag_3w", "lag_4w"]].std(axis=1)
         / (weekly["roll_4w"] + 1)
     )
     # Intermitencia: % de semanas recientes sin ventas (clave para sparse)
@@ -307,9 +307,12 @@ def feature_engineering(df: pd.DataFrame) -> tuple:
     feature_cols = (
         [f"lag_{l}w" for l in LAG_WEEKS]
         + [f"roll_{w}w" for w in ROLLING_WINDOWS]
-        + ["n_weeks", "days_observed", "dow_index",
+        + ["n_weeks", "days_observed",
            "country_enc", "city_freq", "log_lag_1w",
            "trend_4w", "cv_4w", "zero_rate", "max_4w", "growth_rate"]
+        # dow_index NO se incluye como feature: en training week_start es siempre
+        # lunes y el modelo no puede aprender variación por día de semana.
+        # El efecto estacional se aplica como multiplicador post-modelo en predict().
     )
 
     train_df = weekly.dropna(subset=["lag_1w"]).copy()
@@ -377,7 +380,7 @@ def tune_hyperparameters(
     num_leaves, max_depth, learning_rate, n_estimators,
     min_child_samples, subsample, colsample_bytree, reg_alpha, reg_lambda
 
-    Objetivo: minimizar MAPE en el set de validación.
+    Objetivo: minimizar WMAPE en el set de validación.
 
     Returns
     -------
@@ -481,7 +484,6 @@ def evaluate(
     X_train: pd.DataFrame,
     y_train: pd.Series,
     model: lgb.LGBMRegressor,
-    feature_cols: list[str],
 ) -> pd.DataFrame:
     """
     Evaluación sobre las últimas VALIDATION_WEEKS semanas del dataset.
@@ -498,10 +500,9 @@ def evaluate(
     MAPE          : Error porcentual absoluto medio (excluye combos con venta < 1)
     Bias          : Sesgo relativo = Σ(pred − real) / Σ(real)
                       > 0 → modelo sobreestima  |  < 0 → modelo subestima
-    Accuracy      : 1 − |Bias|  (métrica estándar de supply chain)
-                      Penaliza el sesgo sistemático, independiente del error puntual
+    Accuracy         : 1 − WMAPE  (accuracy de supply chain basada en WMAPE)
     delta_mape_%     : mejora de LightGBM sobre baseline en MAPE (positivo = mejor)
-    delta_accuracy_% : mejora de LightGBM sobre baseline en Accuracy
+    delta_accuracy_pp: mejora de LightGBM sobre baseline en Accuracy (puntos porcentuales)
 
     Returns
     -------
@@ -611,10 +612,6 @@ def _bias(y_true, y_pred, eps: float = 1.0) -> float:
         > 0  →  el modelo sobreestima sistemáticamente (over-forecast)
         < 0  →  el modelo subestima sistemáticamente (under-forecast)
         = 0  →  modelo sin sesgo
-
-    Accuracy derivada:
-        Accuracy = 1 − |Bias|
-        1.0 = perfecto  |  0.0 = bias del 100%  |  puede ser negativa si |Bias| > 1
 
     Nota: se excluyen filas con y_true < eps para evitar que ventas cercanas a
     cero dominen el denominador y distorsionen el sesgo agregado.
@@ -745,13 +742,14 @@ def _build_prediction_features(weekly: pd.DataFrame) -> pd.DataFrame:
         lag_4w_val  = sales_h[-4] if n >= 4 else np.nan
         roll_4w_val = float(np.mean(sales_h[-4:])) if n >= 1 else np.nan
         recent_4    = sales_h[-min(4, n):]
-        lag_trio    = np.array([
+        lag_quad    = np.array([
             sales_h[-1] if n >= 1 else np.nan,
             sales_h[-2] if n >= 2 else np.nan,
+            sales_h[-3] if n >= 3 else np.nan,
             sales_h[-4] if n >= 4 else np.nan,
         ], dtype=float)
         cv_4w_val   = (
-            float(np.nanstd(lag_trio) / (roll_4w_val + 1))
+            float(np.nanstd(lag_quad, ddof=1) / (roll_4w_val + 1))
             if not np.isnan(roll_4w_val) else 0.0
         )
 
@@ -839,7 +837,7 @@ def run_pipeline(
     model = train_model(X_train, y_train, best_params)
 
     # 6. Metrics
-    metrics = evaluate(train_df, X_train, y_train, model, feature_cols)
+    metrics = evaluate(train_df, X_train, y_train, model)
 
     # 7. Predict
     submission = predict(df_clean, weekly, model, feature_cols, dow_index, output_dir)
@@ -884,8 +882,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--data-dir",    default="data",   help="Directorio de datos CSV")
     parser.add_argument("--output-dir",  default="output", help="Directorio de salida")
-    parser.add_argument("--trials",      default=30, type=int,
-                        help="Número de trials Optuna (default: 30)")
+    parser.add_argument("--trials",      default=N_OPTUNA_TRIALS, type=int,
+                        help=f"Número de trials Optuna (default: {N_OPTUNA_TRIALS})")
     parser.add_argument("--skip-tuning", action="store_true",
                         help="Omitir Optuna y usar hiperparámetros por defecto")
     args = parser.parse_args()

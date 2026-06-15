@@ -7,8 +7,14 @@
 #
 # Versiones probadas con Python 3.11 (entorno conda forecast_meli)
 
+# Pipeline principal (forecast_pipeline.py)
 lightgbm>=4.6.0
 optuna>=4.9.0
 scikit-learn>=1.9.0
 pandas>=3.0.3
 numpy>=2.4.6
+
+# EDA notebook (EDA_forecast_meli.ipynb)
+matplotlib>=3.9.0
+seaborn>=0.13.0
+scipy>=1.14.0

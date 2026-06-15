@@ -26,7 +26,7 @@ Los combos con historia insuficiente (< `MIN_WEEKS_FOR_LGBM` semanas) usan un fa
 
 ## Arquitectura del pipeline
 
-![Arquitectura del Pipeline](pipeline_architecture.png)
+![Diagrama del Pipeline](pipeline_flowchart.png)
 
 El pipeline consta de 7 etapas secuenciales:
 
@@ -37,7 +37,7 @@ El pipeline consta de 7 etapas secuenciales:
 | ③ | `feature_engineering()` | Serie semanal + 17 features para LightGBM |
 | ④ | `tune_hyperparameters()` | Optuna TPE, walk-forward, objetivo WMAPE *(opcional)* |
 | ⑤ | `train_model()` | Entrenamiento LightGBM global sobre 100% de los datos |
-| ⑥ | `evaluate()` | Walk-forward múltiple + early stopping, métricas por tier |
+| ⑥ | `evaluate()` | LightGBM vs media ponderada por tier de densidad |
 | ⑦ | `predict()` | Genera `submission.csv` para las 3 fechas de forecast |
 
 ---
@@ -56,14 +56,13 @@ forecast_meli/
 │
 ├── forecast_pipeline.py           # Pipeline principal end-to-end
 ├── EDA_forecast_meli.ipynb        # Análisis exploratorio de datos (EDA)
-├── pipeline_architecture.png      # Diagrama de arquitectura del pipeline
+├── pipeline_flowchart.png         # Diagrama de flujo del pipeline
 │
 ├── requirements.txt               # Dependencias Python del proyecto
 ├── setup_env.sh                   # Script de instalación del entorno conda
 │
-├── _draw_architecture.py          # Script auxiliar: genera el diagrama PNG
-├── instructions.md                # Enunciado original del assessment
-└── resumen.txt                    # Resumen del problema y datos
+├── _draw_flowchart.py             # Script auxiliar: genera pipeline_flowchart.png
+└── instructions.md                # Enunciado original del assessment
 ```
 
 ---
@@ -73,18 +72,20 @@ forecast_meli/
 ### `forecast_pipeline.py`
 Pipeline completo end-to-end. Contiene las 7 funciones principales más helpers internos.
 
-**Features del modelo (17 en total):**
+**Features del modelo (16 en total):**
 
 | Grupo | Features | Propósito |
 |---|---|---|
 | Lags | `lag_1w`, `lag_2w`, `lag_3w`, `lag_4w` | Inercia y memoria de corto plazo |
 | Rolling | `roll_2w`, `roll_4w` | Nivel base del combo |
 | Tendencia | `trend_4w`, `growth_rate` | Pendiente y momentum reciente |
-| Variabilidad | `cv_4w` | Coeficiente de variación de la demanda |
+| Variabilidad | `cv_4w` | Coeficiente de variación de la demanda (4 semanas) |
 | Intermitencia | `zero_rate`, `max_4w` | Captura demanda esporádica (sparse) |
 | Madurez | `n_weeks`, `days_observed` | Cold start handling |
 | Categorías | `country_enc`, `city_freq` | Encodings robustos |
-| Estacionalidad | `dow_index`, `log_lag_1w` | Día de semana + escala log |
+| Escala | `log_lag_1w` | Lag en escala logarítmica |
+
+> **Nota:** `dow_index` *no* es feature del modelo. Se aplica como multiplicador estacional post-predicción. En training todas las semanas caen en lunes y el modelo no puede aprender variación por día de semana.
 
 **Métricas de evaluación:**
 
@@ -96,21 +97,21 @@ Pipeline completo end-to-end. Contiene las 7 funciones principales más helpers 
 | Bias | Σ(pred−real) / Σreal | Sesgo sistemático del modelo |
 | Accuracy | 1 − \|WMAPE\| | Accuracy de supply chain basada en WMAPE |
 
-**Resultados con `VALIDATION_WEEKS = 2` (walk-forward múltiple):**
+**Resultados con `VALIDATION_WEEKS = 2` (walk-forward):**
 
 ```
-tier           n_filas  n_combos  lgbm_wmape  base_wmape  lgbm_accuracy  delta_wmape_%  delta_accuracy_pp
-ALL               2158      1402      0.5888      0.6979         0.4112          15.6%          +10.9 pp
-sparse (≤7d)       397       335      0.5346      0.7687         0.4654          30.5%          +23.4 pp
-medium (8-30d)    1009       673      0.6150      0.8925         0.3850          31.1%          +27.8 pp
-dense (>30d)       752       394      0.5857      0.6547         0.4143          10.5%           +6.9 pp
+          tier  n_filas  n_combos  lgbm_mae  base_mae  lgbm_mape  base_mape  lgbm_wmape  base_wmape  lgbm_bias  base_bias  lgbm_accuracy  base_accuracy  delta_mape_%  delta_wmape_%  delta_accuracy_pp
+           ALL     2158      1402     5.435     9.875     0.7287     1.4785      0.3841      0.6979    -0.1733     0.2151         0.6159         0.3021          50.7           45.0               31.4
+  sparse (≤7d)      397       335     1.337     1.992     0.5131     1.0154      0.5157      0.7687    -0.2501     0.0875         0.4843         0.2313          49.5           32.9               25.3
+medium (8-30d)     1009       673     2.857     4.468     0.7719     1.5439      0.5707      0.8925    -0.2456     0.2584         0.4293         0.1075          50.0           36.1               32.2
+  dense (>30d)      752       394    11.059    21.291     0.7844     1.6353      0.3401      0.6547    -0.1552     0.2116         0.6599         0.3453          52.0           48.1               31.5
 ```
 
 **CLI:**
 ```bash
 python forecast_pipeline.py                     # pipeline completo con Optuna
 python forecast_pipeline.py --skip-tuning       # omite Optuna, params por defecto
-python forecast_pipeline.py --trials 50         # más trials de Optuna
+python forecast_pipeline.py --trials 100         # más trials de Optuna
 python forecast_pipeline.py --data-dir mi/ruta  # ruta personalizada
 ```
 
@@ -190,11 +191,17 @@ pip install -r requirements.txt
 ### Dependencias (`requirements.txt`)
 
 ```
+# Pipeline principal
 lightgbm>=4.6.0
 optuna>=4.9.0
 scikit-learn>=1.9.0
 pandas>=3.0.3
 numpy>=2.4.6
+
+# EDA notebook
+matplotlib>=3.9.0
+seaborn>=0.13.0
+scipy>=1.14.0
 ```
 
 Versiones probadas con **Python 3.11** en Linux x86-64.
@@ -233,7 +240,7 @@ Tiempo estimado: 15-30 minutos dependiendo del hardware. Optimiza hiperparámetr
 | Flag | Default | Descripción |
 |---|---|---|
 | `--skip-tuning` | `False` | Omite Optuna, usa parámetros por defecto |
-| `--trials N` | `30` | Número de trials de Optuna |
+| `--trials N` | `100` | Número de trials de Optuna |
 | `--data-dir PATH` | `data/` | Carpeta con los CSVs de entrada |
 | `--output-dir PATH` | `output/` | Carpeta donde se guarda `submission.csv` |
 
@@ -245,14 +252,14 @@ output/
 ```
 
 Las métricas de evaluación se imprimen en consola al finalizar:
-
+Ejemplo
 ```
 MÉTRICAS POR TIER DE DENSIDAD
 tier           n_filas  n_combos  lgbm_wmape  ...  delta_accuracy_pp
-ALL               2158      1402      0.5888  ...          +10.9 pp
-sparse (≤7d)       397       335      0.5346  ...          +23.4 pp
-medium (8-30d)    1009       673      0.6150  ...          +27.8 pp
-dense (>30d)       752       394      0.5857  ...           +6.9 pp
+ALL               2158      1402      0.3982  ...          +30.0 pp
+sparse (≤7d)       397       335      0.5158  ...          +25.3 pp
+medium (8-30d)    1009       673      0.5716  ...          +32.1 pp
+dense (>30d)       752       394      0.3574  ...          +29.7 pp
 ```
 
 ---

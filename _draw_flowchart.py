@@ -1,5 +1,5 @@
 """
-Genera el diagrama de flujo del pipeline en estilo Mermaid usando Graphviz.
+Genera el diagrama de flujo del pipeline (forecast_pipeline.py).
 Exporta: pipeline_flowchart.png
 """
 import graphviz
